@@ -206,8 +206,8 @@ const startFlying = () => {
 };
 
 // --- ሰርቨሩን ማስነሳት ---
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-    console.log(`✅ ሰርቨሩ በፖርት ${PORT} ላይ ስራ ጀምሯል`);
+    console.log(`✅ Server running on port ${PORT}`);
     startGame();
 });
