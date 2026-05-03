@@ -6,30 +6,30 @@ const TelegramBot = require('node-telegram-bot-api');
 const bcrypt = require('bcryptjs');
 
 const app = express();
-app.use(cors());
-// ለፎቶ እንዲሆን የዳታ መጠን ገደቡን ከፍ አድርገነዋል
+
+// 1. CORS ማስተካከያ (ለላይቭ ስራ የግድ ነው)
+app.use(cors({
+    origin: "*",
+    methods: ["GET", "POST"]
+}));
 app.use(express.json({ limit: '15mb' })); 
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
 });
 
 // --- Configuration (ቴሌግራም) ---
 const TELEGRAM_TOKEN = '8601691945:AAHuf1tKpCAmU6j6cOqp0i8sR0qv4F0nCPc';
 const ADMIN_CHAT_ID = '2068983666';
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-// ቦቱ ከሰርቨር ጋር ያለውን ግንኙነት ለማጠናከር polling ተስተካክሏል
-const bot = new TelegramBot(TELEGRAM_TOKEN, { 
-    polling: {
-        autoStart: true,
-        params: { timeout: 10 }
-    }
-});
-
-// ግንኙነት ሲቋረጥ ሰርቨሩ እንዳይቆም
+// ግንኙነት እንዳይቋረጥ ስህተቶችን መያዝ
 bot.on('polling_error', (error) => {
-    console.log("🔄 Telegram Connection: Reconnecting...");
+    // console.log("Telegram error caught");
 });
 
 // --- ዳታቤዝ (ጊዜያዊ) ---
@@ -48,11 +48,15 @@ let gameState = {
 
 // --- የውሸት ውርርዶች መፍጠሪያ (30 ሰዎች) ---
 const generateFakeBets = () => {
-    const fakeNames = ["Abebe", "Sara", "Yoni", "Mery", "Ethio", "King", "Lucky", "Dave", "Kal", "Bini"];
+    const fakeNames = ["Abebe", "Sara", "Yoni", "Mery", "Ethio", "King", "Lucky", "Dave", "Kal", "Bini", "Tedi", "Hani", "Mahi", "Lili"];
     let bets = Array.from({ length: 30 }, () => {
         const name = fakeNames[Math.floor(Math.random() * fakeNames.length)] + "***" + Math.floor(Math.random() * 99);
         const amount = (Math.floor(Math.random() * 100) + 1) * 10; 
-        return { user: name, amount, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+        return { 
+            user: name, 
+            amount, 
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+        };
     });
     return bets.sort((a, b) => b.amount - a.amount);
 };
@@ -92,24 +96,20 @@ app.post('/login', async (req, res) => {
 
 // --- Telegram Approve/Reject Logic ---
 bot.on('callback_query', (query) => {
-    const dataParts = query.data.split('_');
-    const action = dataParts[0];
-    const phone = dataParts[1];
-    const amount = dataParts[2];
-    
+    const [action, phone, amount] = query.data.split('_');
     const user = users.find(u => u.phone === phone);
 
     if (action === 'approve' && user) {
         user.balance += parseFloat(amount);
-        bot.sendMessage(ADMIN_CHAT_ID, `✅ የ ${phone} ዲፖዚት ጸድቋል። አዲሱ ባላንስ: ${user.balance.toFixed(2)} ETB`).catch(e => {});
+        bot.sendMessage(ADMIN_CHAT_ID, `✅ የ ${phone} ዲፖዚት ጸድቋል። አዲሱ ባላንስ: ${user.balance.toFixed(2)} ETB`);
         
         if (userSockets[phone]) {
             io.to(userSockets[phone]).emit('balanceUpdate', user.balance);
         }
     } else if (action === 'reject') {
-        bot.sendMessage(ADMIN_CHAT_ID, `❌ የ ${phone} የ ${amount} ብር ጥያቄ ተሰርዟል።`).catch(e => {});
+        bot.sendMessage(ADMIN_CHAT_ID, `❌ የ ${phone} የ ${amount} ብር ጥያቄ ተሰርዟል።`);
     }
-    bot.answerCallbackQuery(query.id).catch(e => {});
+    bot.answerCallbackQuery(query.id);
 });
 
 // --- Socket Communication ---
@@ -156,7 +156,7 @@ io.on('connection', (socket) => {
             user.balance -= parseFloat(data.amount); 
         }
         const msg = `📤 *የዊዝድሮው ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*\n⚠️ ባላንሳቸው ቀንሷል፤ ብሩን ይላኩላቸው።`;
-        bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(e => {});
+        bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' });
     });
 
     socket.on('disconnect', () => {
@@ -186,7 +186,6 @@ const startGame = () => {
 
 const startFlying = () => {
     gameState.status = 'flying';
-    // Crash point calculation
     const crashPoint = Math.random() < 0.1 ? 1.0 : parseFloat((1 / (1 - Math.random() * 0.95)).toFixed(2));
     
     const interval = setInterval(() => {
@@ -205,9 +204,9 @@ const startFlying = () => {
     }, 100);
 };
 
-// --- ሰርቨሩን ማስነሳት ---
+// 2. Render ፖርት ማስተካከያ (በጣም ወሳኝ!)
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
+    console.log(`✅ ሰርቨሩ በፖርት ${PORT} ላይ ስራ ጀምሯል`);
     startGame();
 });
