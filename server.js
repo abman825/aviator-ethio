@@ -205,7 +205,7 @@ const startFlying = () => {
 };
 
 // 2. Render ፖርት ማስተካከያ (በጣም ወሳኝ!)
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`✅ ሰርቨሩ በፖርት ${PORT} ላይ ስራ ጀምሯል`);
     startGame();
