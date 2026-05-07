@@ -8,9 +8,9 @@ const mongoose = require('mongoose');
 
 const app = express();
 
-// --- 1. CORS Fix (በምስሉ ላይ የታየውን ስህተት ለመፍታት) ---
+// --- 1. CORS FIX (በምስሉ ላይ የታየውን ስህተት ለመፍታት) ---
 app.use(cors({
-    origin: "*", // ወይም የFrontend አድራሻህን ለምሳሌ "http://localhost:3000" ጥቀስ
+    origin: ["https://vercel.app", "http://localhost:3000"],
     methods: ["GET", "POST"],
     credentials: true
 }));
@@ -19,36 +19,35 @@ app.use(express.json({ limit: '15mb' }));
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "*",
+        origin: ["https://vercel.app", "http://localhost:3000"],
         methods: ["GET", "POST"]
     },
-    transports: ['websocket', 'polling'] // ግንኙነቱን ይበልጥ አስተማማኝ ለማድረግ
+    transports: ['websocket', 'polling']
 });
 
-// --- 2. MongoDB Atlas Connection ---
+// --- 2. MongoDB Connection ---
 const mongoURI = "mongodb+srv://abrhamman825_db_user:v1BrSJz7GHHRjwya@cluster0.oxlnr7n.mongodb.net/aviator_db?retryWrites=true&w=majority&appName=Cluster0";
 
 mongoose.connect(mongoURI)
-    .then(() => console.log("✅ የሞንጎ ዲቢ ዳታቤዝ በትክክል ተገናኝቷል"))
+    .then(() => console.log("✅ ዳታቤዝ በትክክል ተገናኝቷል"))
     .catch(err => console.error("❌ DB Error:", err.message));
 
-// --- 3. User Model ---
+// --- 3. User Schema ---
 const userSchema = new mongoose.Schema({
     phone: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     balance: { type: Number, default: 0 },
-    history: { type: Array, default: [] },
-    createdAt: { type: Date, default: Date.now }
+    history: { type: Array, default: [] }
 });
 const User = mongoose.model('User', userSchema);
 
-// --- 4. Telegram Bot (409 Conflict Fix ተጨምሮበታል) ---
+// --- 4. Telegram Config (409 Conflict Fix) ---
 const TELEGRAM_TOKEN = '8601691945:AAHuf1tKpCAmU6j6cOqp0i8sR0qv4F0nCPc';
 const ADMIN_CHAT_ID = '2068983666';
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 bot.on('polling_error', (error) => {
-    if (!error.message.includes('409')) console.log("Telegram Bot Alert:", error.message);
+    if (!error.message.includes('409')) console.log("Bot Message:", error.message);
 });
 
 // --- 5. Game State ---
@@ -64,28 +63,14 @@ let userSockets = {};
 
 const generateFakeBets = () => {
     const names = ["Abebe", "Sara", "Yoni", "Mery", "Ethio", "King", "Lucky", "Dave", "Kal", "Bini", "Tedi", "Hani", "Mahi", "Lili"];
-    let bets = Array.from({ length: 25 }, () => ({
+    return Array.from({ length: 20 }, () => ({
         user: names[Math.floor(Math.random() * names.length)] + "***" + Math.floor(Math.random() * 99),
         amount: (Math.floor(Math.random() * 100) + 1) * 10,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
-    }));
-    return bets.sort((a, b) => b.amount - a.amount);
+    })).sort((a, b) => b.amount - a.amount);
 };
 
 // --- 6. Auth Routes ---
-app.post('/register', async (req, res) => {
-    const { phone, password } = req.body;
-    try {
-        const existingUser = await User.findOne({ phone });
-        if (existingUser) return res.json({ status: 'error', error: 'ይህ ስልክ ቁጥር ተመዝግቧል!' });
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const newUser = new User({ phone, password: hashedPassword });
-        await newUser.save();
-        bot.sendMessage(ADMIN_CHAT_ID, `👤 *አዲስ ተመዝጋቢ:* \`${phone}\``, { parse_mode: 'Markdown' });
-        res.json({ status: 'ok' });
-    } catch (err) { res.json({ status: 'error' }); }
-});
-
 app.post('/login', async (req, res) => {
     const { phone, password } = req.body;
     try {
@@ -96,7 +81,20 @@ app.post('/login', async (req, res) => {
     } catch (err) { res.json({ status: 'error' }); }
 });
 
-// --- 7. Socket.io (Strict Betting Lock) ---
+app.post('/register', async (req, res) => {
+    const { phone, password } = req.body;
+    try {
+        const existing = await User.findOne({ phone });
+        if (existing) return res.json({ status: 'error', error: 'ስልኩ ተመዝግቧል' });
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = new User({ phone, password: hashedPassword });
+        await newUser.save();
+        bot.sendMessage(ADMIN_CHAT_ID, `👤 አዲስ ተመዝጋቢ: ${phone}`);
+        res.json({ status: 'ok' });
+    } catch (err) { res.json({ status: 'error' }); }
+});
+
+// --- 7. Socket Logic (Strict Bet Lock) ---
 io.on('connection', (socket) => {
     socket.emit('data', gameState);
     socket.on('identify', (phone) => { userSockets[phone] = socket.id; });
@@ -117,21 +115,18 @@ io.on('connection', (socket) => {
     });
 
     socket.on('sendDepositRequest', (data) => {
-        const msg = `💰 *የዲፖዚት ጥያቄ*\n📱 ስልክ: \`${data.phone}\` \n💵 መጠን: *${data.amount} ETB*`;
-        const opts = { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[
-            { text: '✅ አጽድቅ', callback_data: `approve_${data.phone}_${data.amount}` },
-            { text: '❌ ሰርዝ', callback_data: `reject_${data.phone}_${data.amount}` }
-        ]]}};
+        const msg = `💰 የዲፖዚት ጥያቄ\n📱 ስልክ: ${data.phone}\n💵 መጠን: ${data.amount} ETB`;
+        const opts = { reply_markup: { inline_keyboard: [[{ text: '✅ አጽድቅ', callback_data: `approve_${data.phone}_${data.amount}` }]] }};
         bot.sendMessage(ADMIN_CHAT_ID, msg, opts);
     });
 });
 
-// --- 8. Admin Control ---
+// --- 8. Admin Controls ---
 bot.on('callback_query', async (query) => {
     const [action, phone, amount] = query.data.split('_');
     if (action === 'approve') {
         const user = await User.findOneAndUpdate({ phone }, { $inc: { balance: parseFloat(amount) } }, { new: true });
-        bot.sendMessage(ADMIN_CHAT_ID, `✅ የ ${phone} ዲፖዚት ጸድቋል:: ባላንስ: ${user.balance}`);
+        bot.sendMessage(ADMIN_CHAT_ID, `✅ የ ${phone} ዲፖዚት ጸድቋል። ባላንስ: ${user.balance}`);
         if (userSockets[phone]) io.to(userSockets[phone]).emit('balanceUpdate', user.balance);
     }
     bot.answerCallbackQuery(query.id);
