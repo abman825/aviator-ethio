@@ -294,21 +294,21 @@ const runGame = () => {
 const startFlying = () => {
     gameState.status = 'flying';
     let crashPoint = generateAviatorCrashPoint();
-    console.log(`🎯 Current Round Crash Point: ${crashPoint}x`); // ለሙከራ ሰርቨር ላይ ለማየት
+    console.log(`🎯 Current Round Crash Point: ${crashPoint}x`);
     
-    // በበረራ ቁጥር መጠን ፍጥነቱ እንዲጨምር የሚያደርግ ዳይናሚክ ኢንክሪመንት
+    // በየ 100ms አንዴ እንዲታደስ ተደረገ (ከመጀመሪያው በግማሽ እንዲዘገይ)
     let flyInterval = setInterval(() => {
         let current = parseFloat(gameState.multiplier);
 
-        // መልቲፕላየሩ እያደገ ሲሄድ በረራው ይበልጥ ፈጣን እንዲሆን ማድረጊያ
+        // በእያንዳንዱ እርምጃ የሚጨመረው ቁጥር (Increment) በግማሽ ቀንሷል
         if (current < 2.0) {
-            gameState.multiplier += 0.01;
+            gameState.multiplier += 0.01; // በጣም ረጋ ያለ ጅማሬ
         } else if (current < 10.0) {
-            gameState.multiplier += 0.05;
+            gameState.multiplier += 0.03; // መካከለኛ ፍጥነት
         } else if (current < 30.0) {
-            gameState.multiplier += 0.20;
+            gameState.multiplier += 0.10; // ፍጥነቱ መጨመር ይጀምራል
         } else {
-            gameState.multiplier += 0.50; // ከ 30 በላይ ሲሆን በጣም በፍጥነት ይሄዳል
+            gameState.multiplier += 0.25; // ከፍተኛ ፍጥነት
         }
 
         gameState.multiplier = parseFloat(gameState.multiplier.toFixed(2));
@@ -316,7 +316,7 @@ const startFlying = () => {
         if(gameState.multiplier >= crashPoint) {
             clearInterval(flyInterval);
             gameState.status = 'crashed';
-            gameState.multiplier = crashPoint; // መጨረሻው ክራሽ ፖይንቱ ላይ በትክክል እንዲቆም
+            gameState.multiplier = crashPoint; 
             gameState.gameHistory.unshift(gameState.multiplier.toFixed(2));
             if(gameState.gameHistory.length > 15) gameState.gameHistory.pop();
             io.emit('data', gameState);
@@ -324,7 +324,7 @@ const startFlying = () => {
         } else { 
             io.emit('data', gameState); 
         }
-    }, 50); // ይበልጥ ስሙዝ (Smooth) የሆነ በረራ ለማሳየት ወደ 50ms ዝቅ ተደርጓል
+    }, 100); // ፍጥነቱን ለመቀነስ ከ 50ms ወደ 100ms ቀይረነዋል
 };
 
 runGame();
